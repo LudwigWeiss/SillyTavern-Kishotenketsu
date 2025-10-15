@@ -161,7 +161,6 @@ function displayStoryArc() {
                 <li>
                     <strong>${act.title}</strong>
                     <p>${act.description}</p>
-                    <button class="kishotenketsu-inject-btn menu_button" data-act-index="${index}">Inject</button>
                 </li>`;
         }
     });
@@ -169,13 +168,6 @@ function displayStoryArc() {
 
     mainContent.innerHTML = arcHtml;
 
-    document.querySelectorAll('.kishotenketsu-inject-btn').forEach(button => {
-        button.addEventListener('click', (event) => {
-            const target = /** @type {HTMLElement} */ (event.target);
-            const actIndex = parseInt(target.dataset.actIndex, 10);
-            injectActIntoContext(actIndex);
-        });
-    });
 }
 
 function injectActIntoContext(actIndex) {

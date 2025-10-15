@@ -39,3 +39,8 @@
 .kishotenketsu-interval-section input {
     width: 60px;
 }
+
+.kishotenketsu-settings label, .kishotenketsu-prompt-section label, .kishotenketsu-interval-section label {
+    color: #00c4ff;
+    font-weight: bold;
+}
