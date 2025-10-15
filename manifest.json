@@ -1,0 +1,9 @@
+{
+    "display_name": "Kishōtenketsu",
+    "version": "0.2.0",
+    "author": "EvaL3n4, with modifications",
+    "description": "An extension to generate and manage a four-act story arc using the kishōtenketsu structure, guided by a user prompt.",
+    "js": "index.js",
+    "css": "style.css",
+    "html_file": "dropdown.html"
+}

@@ -1,0 +1,41 @@
+.kishotenketsu-extension .list-group-item-content {
+    padding: 10px;
+}
+
+.kishotenketsu-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+#kishotenketsu-main-content ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+#kishotenketsu-main-content li {
+    margin-bottom: 15px;
+    padding: 10px;
+    border: 1px solid #444;
+    border-radius: 5px;
+}
+
+#kishotenketsu-main-content strong {
+    display: block;
+    margin-bottom: 5px;
+    color: #00c4ff;
+}
+.kishotenketsu-prompt-section, .kishotenketsu-interval-section {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 10px;
+}
+
+.kishotenketsu-prompt-section label, .kishotenketsu-interval-section label {
+    margin-bottom: 5px;
+}
+
+.kishotenketsu-interval-section input {
+    width: 60px;
+}
