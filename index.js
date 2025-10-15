@@ -10,6 +10,7 @@ const actsOrder = ['ki', 'sho', 'ten', 'ketsu'];
 let isGenerating = false;
 let isInitialized = false;
 let messageCounter = 0;
+let activeArcId = 'root';
 
 async function generateNewArc() {
     if (isGenerating) return;
@@ -88,9 +89,13 @@ async function generateNewArc() {
         storyArc = parseResponse(content);
         currentAct = 0;
         messageCounter = 0;
+        activeArcId = 'root';
 
-        injectActIntoContext(0);
+        if (storyArc.acts.ki && storyArc.acts.ki.description) {
+            injectActIntoContext(storyArc.acts.ki.id, true); // Automatically inject Ki as system message
+        }
         displayStoryArc();
+        generateBtn.textContent = 'Clear';
 
     } catch (error) {
         console.error(`${extensionName}: Failed to generate story arc.`, error);
@@ -107,8 +112,16 @@ async function generateNewArc() {
     }
 }
 
-function parseResponse(content) {
-    const arc = {};
+function parseResponse(content, parentId = 'root') {
+    const arc = {
+        id: parentId,
+        acts: {
+            ki: { id: `${parentId}-ki` },
+            sho: { id: `${parentId}-sho` },
+            ten: { id: `${parentId}-ten` },
+            ketsu: { id: `${parentId}-ketsu` },
+        },
+    };
     const lines = content.split('\n').map(l => l.trim()).filter(l => l);
     
     const actMapping = { 'KI': 'ki', 'SHO': 'sho', 'TEN': 'ten', 'KETSU': 'ketsu' };
@@ -118,8 +131,7 @@ function parseResponse(content) {
         if (titleMatch) {
             const actKey = actMapping[titleMatch[1]];
             if (actKey) {
-                if (!arc[actKey]) arc[actKey] = {};
-                arc[actKey].title = titleMatch[2].trim();
+                arc.acts[actKey].title = titleMatch[2].trim();
             }
             return;
         }
@@ -128,19 +140,21 @@ function parseResponse(content) {
         if (descMatch) {
             const actKey = actMapping[descMatch[1].toUpperCase()];
             if (actKey) {
-                if (!arc[actKey]) arc[actKey] = {};
-                arc[actKey].description = descMatch[2].trim();
+                arc.acts[actKey].description = descMatch[2].trim();
             }
         }
     });
 
-    if (Object.keys(arc).length < 4) {
+    if (Object.values(arc.acts).some(act => !act.title || !act.description)) {
         console.warn(`${extensionName}: Could not parse all acts. Using response as fallback.`);
         return {
-            ki: { title: "Generation Result", description: content },
-            sho: { title: "", description: "" },
-            ten: { title: "", description: "" },
-            ketsu: { title: "", description: "" },
+            id: 'root',
+            acts: {
+                ki: { id: 'root-ki', title: "Generation Result", description: content },
+                sho: { id: 'root-sho', title: "", description: "" },
+                ten: { id: 'root-ten', title: "", description: "" },
+                ketsu: { id: 'root-ketsu', title: "", description: "" },
+            }
         };
     }
 
@@ -153,55 +167,74 @@ function displayStoryArc() {
     const mainContent = document.getElementById('kishotenketsu-main-content');
     if (!mainContent) return;
 
-    let arcHtml = '<ul>';
-    actsOrder.forEach((actKey, index) => {
-        const act = storyArc[actKey];
+    mainContent.innerHTML = renderArc(storyArc);
+    addActButtonListeners();
+}
+
+function renderArc(arc, level = 0) {
+    if (!arc || !arc.acts) return '';
+
+    let arcHtml = `<ul class="arc-level-${level}" data-id="${arc.id}">`;
+    actsOrder.forEach(actKey => {
+        const act = arc.acts[actKey];
         if (act && act.title && act.description) {
             arcHtml += `
-                <li>
+                <li data-id="${act.id}">
                     <strong>${act.title}</strong>
                     <p>${act.description}</p>
+                    <div class="act-buttons">
+                        <button class="regenerate-btn">Regenerate</button>
+                        <button class="sub-arc-btn">Add Sub-Arc</button>
+                    </div>
+                    ${act.children ? renderArc(act.children, level + 1) : ''}
                 </li>`;
         }
     });
+    if (level > 0) {
+        arcHtml += `<button class="set-active-arc-btn">Set Active</button>`;
+    }
     arcHtml += '</ul>';
-
-    mainContent.innerHTML = arcHtml;
-
+    return arcHtml;
 }
 
-function injectActIntoContext(actIndex) {
+function injectActIntoContext(actId, isSystem = false) {
     if (!storyArc) return;
-    const act = storyArc[actsOrder[actIndex]];
+
+    const act = findActById(storyArc, actId);
     if (!act || !act.description) return;
 
     const context = getContext();
     const textToInject = `[Kishōtenketsu: ${act.title}]\n${act.description}`;
+    const promptType = isSystem ? extension_prompt_types.BEFORE_PROMPT : extension_prompt_types.IN_PROMPT;
+    const depth = isSystem ? 0 : 4; // System prompts are usually at the beginning
 
     context.setExtensionPrompt(
         'kishotenketsu',
         textToInject,
-        extension_prompt_types.IN_PROMPT,
-        4,
+        promptType,
+        depth,
     );
 
-    toastr['success'](`Act "${act.title}" injected into context.`);
-    context.printMessages();
+    toastr['success'](`Act "${act.title}" injected as ${isSystem ? 'system message' : 'prompt'}.`);
 }
 
-function onChatChanged() {
-    if (!storyArc) return;
+function findActById(arc, actId) {
+    if (!arc || !arc.acts) return null;
 
-    messageCounter++;
-    const intervalInput = /** @type {HTMLInputElement} */ (document.getElementById('kishotenketsu-interval'));
-    const injectionInterval = parseInt(intervalInput.value, 10);
-
-    if (messageCounter >= injectionInterval) {
-        currentAct = (currentAct + 1) % actsOrder.length;
-        injectActIntoContext(currentAct);
-        messageCounter = 0;
+    for (const actKey of actsOrder) {
+        const act = arc.acts[actKey];
+        if (act.id === actId) {
+            return act;
+        }
+        if (act.children) {
+            const found = findActById(act.children, actId);
+            if (found) return found;
+        }
     }
+
+    return null;
 }
+
 
 async function initializeUI() {
     if (isInitialized) return;
@@ -242,6 +275,12 @@ async function initializeUI() {
     const html = await response.text();
     inlineDrawerContent.innerHTML = html;
 
+    // Append modal to body
+    const modal = document.getElementById('kishotenketsu-modal');
+    if (modal) {
+        document.body.appendChild(modal);
+    }
+
     // Toggle functionality
     inlineDrawerToggle.addEventListener('click', function() {
         this.classList.toggle('open');
@@ -262,10 +301,290 @@ async function initializeUI() {
 
     // Add event listeners
     const generateBtn = document.getElementById('kishotenketsu-generate-btn');
-    generateBtn.addEventListener('click', generateNewArc);
+    generateBtn.addEventListener('click', () => {
+        if (generateBtn.textContent === 'Generate New Arc') {
+            generateNewArc();
+        } else {
+            clearArc();
+        }
+    });
 
     // Listen for chat changes
-    eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
+    const closeBtn = document.getElementById('kishotenketsu-modal-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            const modal = document.getElementById('kishotenketsu-modal');
+            const backdrop = document.getElementById('kishotenketsu-modal-backdrop');
+            if (modal) modal.style.display = 'none';
+            if (backdrop) backdrop.style.display = 'none';
+        });
+    }
+
+    if (modal) {
+        modal.addEventListener('click', (event) => {
+            event.stopPropagation();
+        });
+    }
 }
 
 eventSource.on(event_types.APP_READY, initializeUI);
+eventSource.on(event_types.CHAT_UPDATED, handleChatUpdate);
+
+function handleChatUpdate() {
+    if (!storyArc) return;
+
+    const context = getContext();
+    const lastMessage = context.chat[context.chat.length - 1];
+
+    if (lastMessage && lastMessage.mes) {
+        const injectedArcMatch = lastMessage.mes.match(/\[Kishōtenketsu: (.*?)\]/);
+        if (injectedArcMatch) {
+            const arcTitle = injectedArcMatch[1];
+            const allActs = [];
+            
+            function collectActs(arc) {
+                if (!arc || !arc.acts) return;
+                Object.values(arc.acts).forEach(act => {
+                    if (act) {
+                        allActs.push(act);
+                        if (act.children) {
+                            collectActs(act.children);
+                        }
+                    }
+                });
+            }
+
+            collectActs(storyArc);
+            
+            const foundAct = allActs.find(act => act.title === arcTitle);
+
+            if (foundAct) {
+                const actElement = document.querySelector(`li[data-id="${foundAct.id}"]`);
+                if (actElement) {
+                    // Remove highlight from previously injected arcs
+                    document.querySelectorAll('.injected-arc').forEach(el => el.classList.remove('injected-arc'));
+                    // Add highlight to the new one
+                    actElement.classList.add('injected-arc');
+                }
+            }
+        }
+    }
+}
+
+function addActButtonListeners() {
+    document.querySelectorAll('.regenerate-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const target = /** @type {HTMLElement} */ (e.target);
+            const actId = target.closest('li').dataset.id;
+            showModal('regenerate', actId);
+        });
+    });
+
+    document.querySelectorAll('.sub-arc-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const target = /** @type {HTMLElement} */ (e.target);
+            const actId = target.closest('li').dataset.id;
+            showModal('sub-arc', actId);
+        });
+    });
+
+
+    document.querySelectorAll('.set-active-arc-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const target = /** @type {HTMLElement} */ (e.target);
+            const arcId = target.closest('ul').dataset.id;
+            activeArcId = arcId;
+            toastr['success'](`Set active arc to: ${arcId}`);
+            // Highlight the active arc
+            document.querySelectorAll('.active-arc').forEach(el => el.classList.remove('active-arc'));
+            target.closest('ul').classList.add('active-arc');
+        });
+    });
+}
+
+function showModal(type, actId) {
+    const modal = document.getElementById('kishotenketsu-modal');
+    const backdrop = document.getElementById('kishotenketsu-modal-backdrop');
+    const title = document.getElementById('kishotenketsu-modal-title');
+    const prompt = /** @type {HTMLTextAreaElement} */ (document.getElementById('kishotenketsu-modal-prompt'));
+    const submitBtn = document.getElementById('kishotenketsu-modal-submit');
+
+    if (!modal || !backdrop || !title || !prompt || !submitBtn) return;
+
+    prompt.value = '';
+
+    if (type === 'regenerate') {
+        title.textContent = 'Regenerate Act';
+        submitBtn.onclick = () => regenerateAct(actId, prompt.value);
+    } else {
+        title.textContent = 'Create Sub-Arc';
+        submitBtn.onclick = () => createSubArc(actId, prompt.value);
+    }
+
+    modal.style.display = 'block';
+    backdrop.style.display = 'block';
+}
+
+async function regenerateAct(actId, userPrompt) {
+    if (isGenerating) return;
+    isGenerating = true;
+
+    try {
+        const context = getContext();
+        const characterId = context.characterId;
+        const character = context.characters[characterId];
+        const parentArc = findParentArc(storyArc, actId);
+        const actToRegenerate = findActById(storyArc, actId);
+
+        let precedingActsContent = '';
+        if (parentArc) {
+            for (const actKey of actsOrder) {
+                const currentAct = parentArc.acts[actKey];
+                if (currentAct.id === actId) break;
+                precedingActsContent += `[${actKey.toUpperCase()}: ${currentAct.title}]\n${currentAct.description}\n\n`;
+            }
+        }
+
+        const systemPrompt = `You are a master storyteller. The user wants to regenerate a specific act of a kishōtenketsu story arc. Based on the user's prompt, the character details, and the preceding acts, generate a new version of this act.\n\nUser's Prompt: ${userPrompt}\n\nCharacter Name: ${character.name}\nCharacter Description: ${character.description}\n\nPreceding Acts:\n${precedingActsContent}`;
+        const regenerationInstruction = `Generate a new version of the act titled "${actToRegenerate.title}". Provide a new title and a new paragraph for the description in the following format:\n\n[${Object.keys(parentArc.acts).find(key => parentArc.acts[key].id === actId).toUpperCase()}: New Title]\n\nNew Description: [A new paragraph for the act]`;
+
+        const profileSelector = /** @type {HTMLSelectElement} */ (document.getElementById('kishotenketsu-profile-select'));
+        const profileId = profileSelector.value;
+
+        const content = await context.generateRaw({
+            prompt: regenerationInstruction,
+            systemPrompt: systemPrompt,
+            responseLength: 500,
+        }, profileId);
+
+        if (!content) {
+            throw new Error("Received an empty response from the API.");
+        }
+
+        const newTitleMatch = content.match(/^\[(?:KI|SHO|TEN|KETSU):(.*?)\]/);
+        const newDescriptionMatch = content.match(/New Description:\s*([\s\S]*)/);
+
+        if (newTitleMatch && newDescriptionMatch) {
+            actToRegenerate.title = newTitleMatch[1].trim();
+            actToRegenerate.description = newDescriptionMatch[1].trim();
+        } else {
+            // Fallback if parsing fails
+            actToRegenerate.description = content;
+        }
+
+        displayStoryArc();
+
+    } catch (error) {
+        console.error(`${extensionName}: Failed to regenerate act.`, error);
+        toastr['error']("Failed to regenerate act. Check console for details.");
+    } finally {
+        isGenerating = false;
+        const modal = document.getElementById('kishotenketsu-modal');
+        const backdrop = document.getElementById('kishotenketsu-modal-backdrop');
+        if (modal) modal.style.display = 'none';
+        if (backdrop) backdrop.style.display = 'none';
+    }
+}
+
+async function createSubArc(parentActId, userPrompt) {
+    if (isGenerating) return;
+    isGenerating = true;
+
+    try {
+        const context = getContext();
+        const characterId = context.characterId;
+        const character = context.characters[characterId];
+        const parentAct = findActById(storyArc, parentActId);
+
+        const systemPrompt = `You are a master storyteller. The user wants to create a new 4-act kishōtenketsu sub-arc within an existing story. This sub-arc will replace the content of the act titled "${parentAct.title}". Based on the user's prompt and the character details, generate a compelling new four-act story.\n\nUser's Prompt: ${userPrompt}\n\nCharacter Name: ${character.name}\nCharacter Description: ${character.description}`;
+        
+        const kishotenketsuInstruction = `
+            Generate the story in the following format, with each act on a new line:
+            [KI: Title for the introduction]
+            [SHO: Title for the development]
+            [TEN: Title for the twist]
+            [KETSU: Title for the conclusion]
+
+            Introduction (Ki): [A paragraph for the introduction act]
+            Development (Sho): [A paragraph for the development act]
+            Twist (Ten): [A paragraph for the twist act]
+            Conclusion (Ketsu): [A paragraph for the conclusion act]
+        `;
+
+        const profileSelector = /** @type {HTMLSelectElement} */ (document.getElementById('kishotenketsu-profile-select'));
+        const profileId = profileSelector.value;
+
+        const content = await context.generateRaw({
+            prompt: kishotenketsuInstruction,
+            systemPrompt: systemPrompt,
+            responseLength: 1000,
+        }, profileId);
+
+        if (!content) {
+            throw new Error("Received an empty response from the API.");
+        }
+
+        parentAct.children = parseResponse(content, `${parentActId}-arc`);
+        displayStoryArc();
+
+    } catch (error) {
+        console.error(`${extensionName}: Failed to create sub-arc.`, error);
+        toastr['error']("Failed to create sub-arc. Check console for details.");
+    } finally {
+        isGenerating = false;
+        const modal = document.getElementById('kishotenketsu-modal');
+        const backdrop = document.getElementById('kishotenketsu-modal-backdrop');
+        if (modal) modal.style.display = 'none';
+        if (backdrop) backdrop.style.display = 'none';
+    }
+}
+
+function findParentArc(arc, actId) {
+    if (!arc || !arc.acts) return null;
+
+    for (const actKey of actsOrder) {
+        const act = arc.acts[actKey];
+        if (act.id === actId) {
+            return arc;
+        }
+        if (act.children) {
+            const found = findParentArc(act.children, actId);
+            if (found) return found;
+        }
+    }
+
+    return null;
+}
+
+function clearArc() {
+    storyArc = null;
+    currentAct = 0;
+    messageCounter = 0;
+    activeArcId = 'root';
+
+    const mainContent = document.getElementById('kishotenketsu-main-content');
+    if (mainContent) {
+        mainContent.innerHTML = '<p>Click "Generate New Arc" to create a story.</p>';
+    }
+
+    const generateBtn = document.getElementById('kishotenketsu-generate-btn');
+    if (generateBtn) {
+        generateBtn.textContent = 'Generate New Arc';
+    }
+}
+
+function findArcById(arc, arcId) {
+    if (arc.id === arcId) return arc;
+    if (!arc.acts) return null;
+
+    for (const actKey of actsOrder) {
+        const act = arc.acts[actKey];
+        if (act.children) {
+            const found = findArcById(act.children, arcId);
+            if (found) return found;
+        }
+    }
+
+    return null;
+}
